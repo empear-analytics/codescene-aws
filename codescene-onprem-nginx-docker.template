@@ -137,6 +137,34 @@ Mappings:
     us-gov-east-1: 
       HVM64: "ami-78db3a09"
 
+  Scripts:
+    install-docker-compose:
+      script: |
+        #!/bin/bash
+        set -x -e
+        curl -L https://github.com/docker/compose/releases/download/1.22.0/docker-compose-$(uname -s)-$(uname -m) -o /usr/local/bin/docker-compose
+        chmod +x /usr/local/bin/docker-compose
+        usermod -aG docker ec2-user
+
+    install-codescene:
+      script: |
+        #!/bin/bash
+        set -x -e
+        git clone https://github.com/empear-analytics/codescene-aws.git
+
+    configure-ssh:
+      script: |
+        #!/bin/bash
+        set -x -e
+        ssh-keygen -t rsa -N "" -f ~/.ssh/id_rsa
+        #ssh-keyscan -t rsa github.com | ssh-keygen -lf -
+
+    run-codescene:
+      script: |
+        #!/bin/bash
+        cd codescene-aws
+        docker-compose up -d
+        
 Resources:
   VPC:
     Type: AWS::EC2::VPC
@@ -340,8 +368,10 @@ Resources:
           default:
             - enable_extras
             - basic_install
-            - docker_compose
-            - run_codescene
+            - custom_install
+            - configuration
+            - startup
+
         enable_extras:
           commands:
             enable_docker:
@@ -360,23 +390,22 @@ Resources:
                 enabled: "true"
                 ensureRunning: "true"
 
-        docker_compose:
+        custom_install:
           commands:
-            a_install_docker_compose:
-              command: 'sudo curl -L https://github.com/docker/compose/releases/download/1.22.0/docker-compose-$(uname -s)-$(uname -m) -o /usr/local/bin/docker-compose'
-            b_fix_permissions:
-              command: 'sudo chmod +x /usr/local/bin/docker-compose'
-            c_add_ec2_user_to_docker:
-              command: 'sudo usermod -aG docker ec2-user'
+            1_install_docker_compose:
+              command: !FindInMap [ Scripts, install-docker-compose, script ]
+            2_install_codescene:
+              command: !FindInMap [ Scripts, install-codescene, script ]
+
+        configuration:
+          commands:
+            1_configure_ssh:
+              command: !FindInMap [ Scripts, configure-ssh, script ]
         
-        run_codescene:
+        startup:
           commands:
-            a_clone_codescene_aws:
-              command: 'git clone https://github.com/empear-analytics/codescene-aws.git'
-            b_run_codescene:
-              # The installation seems to run under the root account and in the root folder, thus the /
-              cwd: /codescene-aws
-              command: 'docker-compose up -d'
+            1_run_codescene:
+              command: !FindInMap [ Scripts, run-codescene, script ]
         
     Properties:
       ImageId: !FindInMap [MapRegionToAMI, !Ref "AWS::Region", HVM64]
