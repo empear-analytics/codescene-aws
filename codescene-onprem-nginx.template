@@ -138,6 +138,36 @@ Mappings:
       HVM64: "ami-78db3a09"
 
   Files:
+    nginx-conf:
+      content:
+        user nginx;
+        worker_processes auto;
+        error_log /var/log/nginx/error.log;
+        pid /run/nginx.pid;
+
+        events {
+            worker_connections 1024;
+        }
+
+        http {
+            log_format  main  '$remote_addr - $remote_user [$time_local] "$request" '
+                              '$status $body_bytes_sent "$http_referer" '
+                              '"$http_user_agent" "$http_x_forwarded_for"';
+
+            access_log  /var/log/nginx/access.log  main;
+
+            sendfile            on;
+            tcp_nopush          on;
+            tcp_nodelay         on;
+            keepalive_timeout   65;
+            types_hash_max_size 2048;
+
+            include             /etc/nginx/mime.types;
+            default_type        application/octet-stream;
+
+            include /etc/nginx/conf.d/*.conf;
+        }
+
     reverseproxy-conf:
       content: |
         server {
@@ -162,8 +192,7 @@ Mappings:
           proxy_cookie_path / "/; secure";
 
           location /  {
-            # upstream hostname is service name in docker-compose.yml
-            proxy_pass http://codescene:3003;
+            proxy_pass http://localhost:3003;
 
             proxy_redirect http:// $scheme://;
             proxy_set_header Host $http_host;
@@ -172,38 +201,39 @@ Mappings:
             proxy_set_header X-Forwarded-Proto $scheme;
           }
         }
-
-    docker-compose-yml:
+    codescene-service:
       content: |
-        version: '3.2'
+        [Unit]
+        Description=CodeScene behavioral code analysis tool
+        After=network.target
 
-        services:
-          reverseproxy:
-            image: nginx:latest
-            depends_on:
-              - codescene    
-            restart: always
-            ports:
-              - 80:80
-              - 443:443
-            volumes:
-              - ~/codescene/nginx/conf.d:/etc/nginx/conf.d
-              - ~/codescene/nginx/error.log:/etc/nginx/error_log.log
+        [Service]
+        Type=simple
+        Restart=always
+        RestartSec=10
+        User=ec2-user
+        Environment=CODESCENE_DB_PATH=/opt/codescene/codescene
+        Environment=CODESCENE_ANALYSIS_RESULTS_ROOT=/opt/codescene/analysis
+        Environment=CODESCENE_CLONED_REPOSITORIES_ROOT=/opt/codescene/repos
+        Environment=CODESCENE_TIMEZONE=UTC
+        ExecStart=/usr/bin/java -jar /opt/codescene/codescene-enterprise-edition.standalone.jar
+        # Set mem settings depending on machine config?
+        #ExecStart=/usr/bin/java -Xms5128m -Xmx8g -jar /opt/codescene/codescene-enterprise-edition.standalone.jar
+        StartLimitInterval=0
 
-          codescene:
-            image: empear/ubuntu-onprem:latest
-            restart: always
-            volumes:
-              - ~/codescene:/codescene
-              - ~/.ssh:/root/.ssh
+        [Install]
+        WantedBy=multi-user.target
 
   Scripts:
-    install-docker-compose:
+    install-codescene:
       command: |
         #!/bin/bash
-        curl -L https://github.com/docker/compose/releases/download/1.22.0/docker-compose-$(uname -s)-$(uname -m) -o /usr/local/bin/docker-compose
-        chmod +x /usr/local/bin/docker-compose
-        usermod -aG docker ec2-user
+        # Make sure the ec2-user owns the CodeScene directories
+        chown -R ec2-user:ec2-user /opt/codescene
+        # Start CodeScene as a service
+        systemctl daemon-reload
+        systemctl enable codescene
+        systemctl start codescene
 
     configure-ssh:
       command: |
@@ -212,22 +242,18 @@ Mappings:
           # Generate an ssh key
           ssh-keygen -t rsa -N "" -f ~/.ssh/id_rsa
         EOF
-
-    configure-codescene:
+    
+    configure-nginx:
       command: |
         #!/bin/bash
-        # Make sure the ec2-user owns the codescene configuration
-        chown -R ec2-user:ec2-user /home/ec2-user/codescene
-        sudo -u ec2-user -i <<EOF
-          # Generate a self-signed certificate
-          cd ~/codescene/nginx/conf.d
-          openssl req -subj '/CN=localhost' -x509 -newkey rsa:4096 -nodes -keyout localhost.key -out localhost.crt -days 365
-        EOF
+        # Generate a self-signed certificate
+        openssl req -subj '/CN=localhost' -x509 -newkey rsa:4096 -nodes -keyout /etc/nginx/conf.d/localhost.key -out /etc/nginx/conf.d/localhost.crt -days 365
+        systemctl restart nginx
 
     run-codescene:
       command: |
         #!/bin/bash
-        docker-compose -f /home/ec2-user/codescene/docker-compose.yml up -d
+        systemctl start codescene
 
 Resources:
   VPC:
@@ -438,38 +464,44 @@ Resources:
 
         enable_extras:
           commands:
-            enable_docker:
-              command: 'amazon-linux-extras enable docker'
             enable_nginx:
               command: 'amazon-linux-extras enable nginx1'
+            enable_openjdk:
+              command: 'amazon-linux-extras enable java-openjdk11'
 
         basic_install: 
           packages:
             yum:
-              git : []
-              docker : []
+              git: []
+              nginx: []
+              java-11-openjdk: []
           services: 
             sysvinit:
-              docker:
+              nginx: 
                 enabled: "true"
                 ensureRunning: "true"
 
         custom_install:
+          files:
+            /opt/codescene/codescene-enterprise-edition.standalone.jar:
+              source: https://downloads.codescene.io/enterprise/3.4.5/codescene-enterprise-edition.standalone.jar
+            /etc/systemd/system/codescene.service:
+              content: !FindInMap [ Files, codescene-service, content ] 
           commands:
-            1_install_docker_compose:
-              command: !FindInMap [ Scripts, install-docker-compose, command ]
-
+            1_install_codescene:
+              command: !FindInMap [ Scripts, install-codescene, command ]
+          
         configuration:
           files:
-            /home/ec2-user/codescene/nginx/conf.d/reverseproxy.conf:
-              content: !FindInMap [ Files, reverseproxy-conf, content ] 
-            /home/ec2-user/codescene/docker-compose.yml:
-              content: !FindInMap [ Files, docker-compose-yml, content ]
+            /etc/nginx/conf.d/reverseproxy.conf:
+              content: !FindInMap [ Files, reverseproxy-conf, content ]
+            /etc/nginx/nginx.conf:
+              content: !FindInMap [ Files, nginx-conf, content ]
           commands:
             1_configure_ssh:
               command: !FindInMap [ Scripts, configure-ssh, command ]
-            2_configure_codescene:
-              command: !FindInMap [ Scripts, configure-codescene, command ]
+            2_configure_nginx:
+              command: !FindInMap [ Scripts, configure-nginx, command ]
         
         startup:
           commands:
