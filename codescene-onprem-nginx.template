@@ -1,7 +1,7 @@
 #Author: Kalle Norrestam (kalle.norrestam@empear.com)
 #Date: 2019-10-15
 AWSTemplateFormatVersion: "2010-09-09"
-Description:  "This template creates the infrastructure for running Codescene OnPrem behind nginx in docker in an EC2 instance"
+Description:  "This template creates the infrastructure for running Codescene OnPrem behind nginx in an EC2 instance"
 Metadata: 
   AWS::CloudFormation::Interface: 
     ParameterGroups:
