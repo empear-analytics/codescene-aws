@@ -6,8 +6,6 @@ services:
     depends_on:
       - codescene    
     restart: always
-    environment:
-      - GIT_SSH_COMMAND=ssh -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no
     ports:
       - 80:80
       - 443:443
@@ -18,6 +16,8 @@ services:
   codescene:
     image: empear/ubuntu-onprem:latest
     restart: always
+    environment:
+      - GIT_SSH_COMMAND=ssh -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no
     volumes:
       - ~/codescene:/codescene
       - ~/.ssh:/root/.ssh
