@@ -6,6 +6,8 @@ services:
     depends_on:
       - codescene    
     restart: always
+    environment:
+      - GIT_SSH_COMMAND=ssh -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no
     ports:
       - 80:80
       - 443:443
